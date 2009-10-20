@@ -1,5 +1,6 @@
 ; $Id$
+
 name = User One
-description = Allows first user to log in with a login name different from user name.
+description = Allows first user to log in with a login name different from username.
 version = 6.x-1.0
 core = 6.x

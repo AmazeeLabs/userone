@@ -5,11 +5,8 @@
  * @file
  * User One module.
  *
- * Allows first user to log in with a login name different from user name.
+ * Allows first user to log in with a login name different from username.
  */
-function ism($var) {
-  drupal_set_message('<pre>'.print_r($var, 1).'</pre>');
-}
 
 /**
  * Implementation of hook_help().
@@ -24,18 +21,20 @@ function userone_help($path, $arg) {
 /**
  * Implementation of hook_form_alter().
  */
-function userone_form_user_login_alter(&$form, $form_state) {
-  // Replace the core validator with useone's.
-  foreach ($form['#validate'] as $key => $validator) {
-    if ($validator == 'user_login_authenticate_validate') {
-      $form['#validate'][$key] = 'userone_login_authenticate_validate';
-      break;
+function userone_form_alter(&$form, $form_state, $form_id) {
+  if ($form_id == 'user_login' || $form_id == 'user_login_block') {
+    // Replace the core validator with useone's.
+    foreach ($form['#validate'] as $key => $validator) {
+      if ($validator == 'user_login_authenticate_validate') {
+        $form['#validate'][$key] = 'userone_login_authenticate_validate';
+        break;
+      }
     }
   }
 }
 
 /**
- * Replaces core's user_login_authenticate_validate()
+ * Replace core's user_login_authenticate_validate()
  */
 function userone_login_authenticate_validate($form, &$form_state) {
   if (!userone_authenticate($form_state['values'])) {
@@ -44,7 +43,8 @@ function userone_login_authenticate_validate($form, &$form_state) {
 }
 
 /**
- * @return value: True if User One handled authentication whether it was successful or not.
+ * @return
+ *   True if User One handled authentication whether it was successful or not so it is not handled again by user_authenticate().
  */
 function userone_authenticate($form_values) {
   global $user;
@@ -60,7 +60,7 @@ function userone_authenticate($form_values) {
           watchdog('userone', 'Session opened for user one account.');
         }
         else {
-          watchdog('userone', 'Login attempt failed for user one due to unmatching IP address');
+          watchdog('userone', 'Login attempt failed for user one due to unmatching IP address.');
         }
       }
       else {
@@ -121,13 +121,13 @@ function userone_menu() {
 
 function userone_admin_settings() {
   $form['info'] = array(
-    '#value' => '<p>' . t('User One authenticates the admin account (user 1) using login name in place of Drupal username. The module may conflict with  other 3rd party authentication modules.') . '</p>',
+    '#value' => '<p>' . t('User One authenticates the admin account (user 1) using login name in place of username. The module may conflict with  other 3rd party authentication modules.') . '</p>',
   );
 
   $form['userone_name'] = array(
     '#type' => 'textfield',
     '#title' => t('User One Login Name'),
-    '#description' => t('Login name is used only for authentication and all other operations keep using Drupal user name.'),
+    '#description' => t('In order to ensure uniqueness of the login name, you are strongly encouraged to use illegal characters for regular user name such as !@#$%&*.'),
     '#default_value' => variable_get('userone_name', ''),
   );
   
@@ -138,6 +138,13 @@ function userone_admin_settings() {
     '#default_value' => variable_get('userone_ip', ''),
   );
   
-  
   return system_settings_form($form);
+}
+
+function userone_admin_settings_validate($form, &$form_state) {
+  $userone = user_load(1);
+
+  if ($form_state['values']['userone_name'] == $userone->name) {
+    form_set_error('userone_name', t('Login name may not be same as username, %name.', array('%name' => $userone->name)));
+  }
 }
