@@ -1,0 +1,143 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * User One module.
+ *
+ * Allows first user to log in with a login name different from user name.
+ */
+function ism($var) {
+  drupal_set_message('<pre>'.print_r($var, 1).'</pre>');
+}
+
+/**
+ * Implementation of hook_help().
+ */
+function userone_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#userone':
+      return t('Allows first user to log in with a login name different from user name.');
+  }
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function userone_form_user_login_alter(&$form, $form_state) {
+  // Replace the core validator with useone's.
+  foreach ($form['#validate'] as $key => $validator) {
+    if ($validator == 'user_login_authenticate_validate') {
+      $form['#validate'][$key] = 'userone_login_authenticate_validate';
+      break;
+    }
+  }
+}
+
+/**
+ * Replaces core's user_login_authenticate_validate()
+ */
+function userone_login_authenticate_validate($form, &$form_state) {
+  if (!userone_authenticate($form_state['values'])) {
+    user_authenticate($form_state['values']);
+  }
+}
+
+/**
+ * @return value: True if User One handled authentication whether it was successful or not.
+ */
+function userone_authenticate($form_values) {
+  global $user;
+
+  if ($userone_name = variable_get('userone_name', '')) {
+    $userone = user_load(1);
+    
+    if ($form_values['name'] == $userone_name) {
+      if (md5($form_values['pass']) == $userone->pass) {
+        if (userone_check_ip()) {
+          $user = $userone;
+          user_authenticate_finalize($form_values);
+          watchdog('userone', 'Session opened for user one account.');
+        }
+        else {
+          watchdog('userone', 'Login attempt failed for user one due to unmatching IP address');
+        }
+      }
+      else {
+        watchdog('userone', 'Login attempt failed for user one with User One login (%user).', array('%user' => $form_values['name']));
+      }
+
+      return TRUE;
+    }
+    elseif ($form_values['name'] == $userone->name) {
+      if (md5($form_values['pass']) == $userone->pass) {
+        watchdog('userone', 'Login attempt failed for user one with Drupal username (%user) and correct password.', array('%user' => $form_values['name']));
+      }
+      else {
+        watchdog('userone', 'Login attempt failed for user one with Drupal username (%user) and wrong password.', array('%user' => $form_values['name']));
+      }
+
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Check if remote ip address is in the allowed list.
+ */
+function userone_check_ip() {
+  if ($ips = variable_get('userone_ip', '')) {
+    $ips = explode("\n", str_replace("\r", '', $ips));
+    foreach ($ips as $ip) {
+      if (strpos($_SERVER['REMOTE_ADDR'] .'.', "$ip.") === 0) {
+        return TRUE;
+      }
+    }
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/**
+ * Implementation of hook_menu().
+ */
+function userone_menu() {
+  global $user;
+  $items = array();
+
+  $items['admin/settings/userone'] = array(
+    'title' => 'User One',
+    'description' => 'Configure User One.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('userone_admin_settings'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM
+  );
+  
+  return $items;
+}
+
+function userone_admin_settings() {
+  $form['info'] = array(
+    '#value' => '<p>' . t('User One authenticates the admin account (user 1) using login name in place of Drupal username. The module may conflict with  other 3rd party authentication modules.') . '</p>',
+  );
+
+  $form['userone_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('User One Login Name'),
+    '#description' => t('Login name is used only for authentication and all other operations keep using Drupal user name.'),
+    '#default_value' => variable_get('userone_name', ''),
+  );
+  
+  $form['userone_ip'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Allowed IP addresses'),
+    '#description' => t('List one IP per line which admin account should login from. Missing trailing numbers will be interpreted as wildcard. (i.e., 123.45 will allow all IPs like 123.45.*.*). If empty, there will be no restriction.'),
+    '#default_value' => variable_get('userone_ip', ''),
+  );
+  
+  
+  return system_settings_form($form);
+}
