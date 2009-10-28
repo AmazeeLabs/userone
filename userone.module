@@ -19,6 +19,90 @@ function userone_help($path, $arg) {
 }
 
 /**
+ * Implementation of hook_menu_alter().
+ */
+function userone_menu_alter(&$items) {
+  $items['user/%user_uid_optional']['access callback'] = 'userone_view_access';
+  $items['user/%user/delete']['access callback'] = 'userone_delete_access';
+  $items['user/%user_category/edit']['access callback'] = 'userone_edit_access';
+  
+  // Todo:
+  // Manipulate access for $items['user/%user_category/edit/'. $category['name']] too.
+  // See user_menu()
+  // Code borrowed from user_menu()
+}
+
+function userone_view_access($account) {
+  global $user;
+  
+  if ($account->uid == 1 and $user->uid != 1) {
+    // Make sure access allowed roles are pulled from ones with 'access user profiles' permission.
+    $roles_access = userone_access_raw('view');
+    $roles_access = array_intersect($roles_access, variable_get('userone_view_access', userone_access_raw('view')));
+
+    return (user_view_access($account) and array_intersect($roles_access, array_keys($user->roles)));
+    
+  }
+  else {
+    return user_view_access($account);
+  }
+}
+
+function userone_edit_access($account) {
+  global $user;
+  
+  if ($account->uid == 1 and $user->uid > 1) {
+    // Make sure access allowed roles are pulled from ones with 'administer users' permission.
+    $roles_access = userone_access_raw('edit');
+    $roles_access = array_intersect($roles_access, variable_get('userone_edit_access', userone_access_raw('edit')));
+
+    return (user_edit_access($account) and (bool)array_intersect($roles_access, array_keys($user->roles)));
+  }
+  else {
+    return user_edit_access($account);
+  }
+}
+
+function userone_delete_access($perm) {
+  // No one, not even user one, should have delete permission for user one.
+  if (arg(1) == 1) {
+    return FALSE;
+  }
+  else {
+    return user_access($perm);
+  }
+}
+
+/**
+ * @param $mode
+ *   string: 'view' or 'edit'
+ */
+function userone_access_raw($mode) {
+  static $cached, $roles;
+  
+  if (!$cached[$mode]) {
+    $cached[$mode] = TRUE;
+    $roles[$mode] = array();
+    
+    if ($mode == 'view') {
+      $result = db_query("SELECT rid FROM {permission} WHERE perm LIKE '%%access user profiles,%%' OR perm LIKE '%%access user profiles'");
+    }
+    else if ($mode == 'edit') {
+      $result = db_query("SELECT rid FROM {permission} WHERE perm LIKE '%%administer users,%%' OR perm LIKE '%%administer users'");
+    }
+    else {
+      return FALSE;
+    }
+    
+    while ($row = db_fetch_object($result)) {
+      $roles[$mode][] = $row->rid;
+    }
+  }
+  
+  return $roles[$mode];
+}
+
+/**
  * Implementation of hook_form_alter().
  */
 function userone_form_alter(&$form, $form_state, $form_id) {
@@ -112,11 +196,17 @@ function userone_menu() {
     'description' => 'Configure User One.',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('userone_admin_settings'),
-    'access arguments' => array('administer site configuration'),
+    'access callback' => 'userone_admin_access',
     'type' => MENU_NORMAL_ITEM
   );
   
   return $items;
+}
+
+function userone_admin_access() {
+  global $user;
+  
+  return $user->uid == 1 ? TRUE : FALSE;
 }
 
 function userone_admin_settings() {
@@ -127,7 +217,7 @@ function userone_admin_settings() {
   $form['userone_name'] = array(
     '#type' => 'textfield',
     '#title' => t('User One Login Name'),
-    '#description' => t('In order to ensure uniqueness of the login name, you are strongly encouraged to use illegal characters for regular user name such as !@#$%&*.'),
+    '#description' => t('In order to ensure uniqueness of the login name, you are <strong>strongly encouraged to use illegal characters</strong> for regular user name such as !@#$%&*.'),
     '#default_value' => variable_get('userone_name', ''),
   );
   
@@ -137,6 +227,46 @@ function userone_admin_settings() {
     '#description' => t('List one IP per line which admin account should login from. Missing trailing numbers will be interpreted as wildcard. (i.e., 123.45 will allow all IPs like 123.45.*.*). If empty, there will be no restriction.'),
     '#default_value' => variable_get('userone_ip', ''),
   );
+  
+  $roles = user_roles(TRUE, 'administer users');
+  
+  if ($roles) {
+    $form['userone_edit_access'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t('Allow editing user one account'),
+      '#default_value' => variable_get('userone_edit_access', array()),
+      '#options' => $roles,
+      '#description' => t("User One blocks all roles with 'administer users' permission from editing user one account. Check roles for which you want to allow editing user one account, which is not recommended. Additionally, delete access to user one is blocked for everyone including user one itself."),
+      
+    );
+  }
+  else {
+    $form['userone_edit_access_info'] = array(
+      '#type' => 'item',
+      '#title' => t('Access to user one edit blocked'),
+      '#description' => t('No account except user one account can edit user one account regardless of roles and permissions.'),
+    );
+  }
+
+  $roles = user_roles(FALSE, 'access user profiles');
+  
+  if ($roles) {
+    $form['userone_view_access'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t('Allow viewing user one account'),
+      '#default_value' => variable_get('userone_view_access', userone_access_raw('view')),
+      '#options' => $roles,
+      '#description' => t("Uncheck roles for which you want to disallow viewing user one account even if they have 'access user profiles' permission."),
+      
+    );
+  }
+  else {
+    $form['userone_view_access_info'] = array(
+      '#type' => 'item',
+      '#title' => t('Access to user one profile blocked'),
+      '#description' => t('No account except user one account can view user one account.'),
+    );
+  }
   
   return system_settings_form($form);
 }
