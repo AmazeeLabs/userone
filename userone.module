@@ -22,45 +22,8 @@ function userone_help($path, $arg) {
  * Implementation of hook_menu_alter().
  */
 function userone_menu_alter(&$items) {
-  $items['user/%user_uid_optional']['access callback'] = 'userone_view_access';
+  // Since there is no "pre-delete" action for hook_user(), modify access callback.
   $items['user/%user/delete']['access callback'] = 'userone_delete_access';
-  $items['user/%user_category/edit']['access callback'] = 'userone_edit_access';
-  
-  // Todo:
-  // Manipulate access for $items['user/%user_category/edit/'. $category['name']] too.
-  // See user_menu()
-  // Code borrowed from user_menu()
-}
-
-function userone_view_access($account) {
-  global $user;
-  
-  if ($account->uid == 1 and $user->uid != 1) {
-    // Make sure access allowed roles are pulled from ones with 'access user profiles' permission.
-    $roles_access = userone_access_raw('view');
-    $roles_access = array_intersect($roles_access, variable_get('userone_view_access', userone_access_raw('view')));
-
-    return (user_view_access($account) and array_intersect($roles_access, array_keys($user->roles)));
-    
-  }
-  else {
-    return user_view_access($account);
-  }
-}
-
-function userone_edit_access($account) {
-  global $user;
-  
-  if ($account->uid == 1 and $user->uid > 1) {
-    // Make sure access allowed roles are pulled from ones with 'administer users' permission.
-    $roles_access = userone_access_raw('edit');
-    $roles_access = array_intersect($roles_access, variable_get('userone_edit_access', userone_access_raw('edit')));
-
-    return (user_edit_access($account) and (bool)array_intersect($roles_access, array_keys($user->roles)));
-  }
-  else {
-    return user_edit_access($account);
-  }
 }
 
 function userone_delete_access($perm) {
@@ -100,6 +63,38 @@ function userone_access_raw($mode) {
   }
   
   return $roles[$mode];
+}
+
+/**
+ * Implementation of hook_user().
+ */
+function userone_user($op, &$edit, &$account, $category = NULL) {
+  global $user;
+  
+  // Access control to edit of user one account.
+  if ($op == 'form') {
+    if ($account->uid == 1 and $user->uid != 1) {
+      // Make sure access allowed roles are pulled from ones with 'administer users' permission.
+      $roles_access = userone_access_raw('edit');
+      $roles_access = array_intersect($roles_access, variable_get('userone_edit_access', userone_access_raw('edit')));
+
+      if (!(user_edit_access($account) and (bool)array_intersect($roles_access, array_keys($user->roles)))) {
+        drupal_goto('user');
+      }
+    }
+  }
+  // Access control to view of user one account.
+  else if ($op == 'view') {
+    if ($account->uid == 1 and $user->uid != 1) {
+      // Make sure access allowed roles are pulled from ones with 'access user profiles' permission.
+      $roles_access = userone_access_raw('view');
+      $roles_access = array_intersect($roles_access, variable_get('userone_view_access', userone_access_raw('view')));
+
+      if (!(user_view_access($account) and (bool)array_intersect($roles_access, array_keys($user->roles)))) {
+        drupal_goto('user');
+      }
+    }
+  }
 }
 
 /**
@@ -204,9 +199,7 @@ function userone_menu() {
 }
 
 function userone_admin_access() {
-  global $user;
-  
-  return $user->uid == 1 ? TRUE : FALSE;
+  return $GLOBALS['user']->uid == 1 ? TRUE : FALSE;
 }
 
 function userone_admin_settings() {

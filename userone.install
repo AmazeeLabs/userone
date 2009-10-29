@@ -14,4 +14,6 @@ function userone_install() {
 function userone_uninstall() {
   variable_del('userone_name');
   variable_del('userone_ip');
+  variable_del('userone_edit_access');
+  variable_del('userone_view_access');
 }
