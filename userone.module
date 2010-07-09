@@ -271,3 +271,102 @@ function userone_admin_settings_validate($form, &$form_state) {
     form_set_error('userone_name', t('Login name may not be same as username, %name.', array('%name' => $userone->name)));
   }
 }
+
+/**
+ * Implementation of hook_block().
+ *
+ * Code is identical to user_block() except it hides user one in "What's new" and "Who's online" blocks.
+ */
+function userone_block($op = 'list', $delta = 0, $edit = array()) {
+  global $user;
+
+  if ($op == 'list') {
+    $blocks[2]['info'] = t('Who\'s new (userone)');
+
+    // Too dynamic to cache.
+    $blocks[3]['info'] = t('Who\'s online (userone)');
+    $blocks[3]['cache'] = BLOCK_NO_CACHE;
+    return $blocks;
+  }
+  else if ($op == 'configure' && $delta == 2) {
+    $form['user_block_whois_new_count'] = array(
+      '#type' => 'select',
+      '#title' => t('Number of users to display'),
+      '#default_value' => variable_get('user_block_whois_new_count', 5),
+      '#options' => drupal_map_assoc(array(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+    );
+    return $form;
+  }
+  else if ($op == 'configure' && $delta == 3) {
+    $period = drupal_map_assoc(array(30, 60, 120, 180, 300, 600, 900, 1800, 2700, 3600, 5400, 7200, 10800, 21600, 43200, 86400), 'format_interval');
+    $form['user_block_seconds_online'] = array('#type' => 'select', '#title' => t('User activity'), '#default_value' => variable_get('user_block_seconds_online', 900), '#options' => $period, '#description' => t('A user is considered online for this long after they have last viewed a page.'));
+    $form['user_block_max_list_count'] = array('#type' => 'select', '#title' => t('User list length'), '#default_value' => variable_get('user_block_max_list_count', 10), '#options' => drupal_map_assoc(array(0, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)), '#description' => t('Maximum number of currently online users to display.'));
+
+    return $form;
+  }
+  else if ($op == 'save' && $delta == 2) {
+    variable_set('user_block_whois_new_count', $edit['user_block_whois_new_count']);
+  }
+  else if ($op == 'save' && $delta == 3) {
+    variable_set('user_block_seconds_online', $edit['user_block_seconds_online']);
+    variable_set('user_block_max_list_count', $edit['user_block_max_list_count']);
+  }
+  else if ($op == 'view') {
+    $block = array();
+
+    switch ($delta) {
+      case 2:
+        if (user_access('access content')) {
+          // Retrieve a list of new users who have subsequently accessed the site successfully.
+          $result = db_query_range('SELECT uid, name FROM {users} WHERE uid > 1 AND status != 0 AND access != 0 ORDER BY created DESC', 0, variable_get('user_block_whois_new_count', 5));
+          while ($account = db_fetch_object($result)) {
+            $items[] = $account;
+          }
+          $output = theme('user_list', $items);
+
+          $block['subject'] = t('Who\'s new');
+          $block['content'] = $output;
+        }
+        return $block;
+
+      case 3:
+        if (user_access('access content')) {
+          // Count users active within the defined period.
+          $interval = time() - variable_get('user_block_seconds_online', 900);
+
+          // Perform database queries to gather online user lists.  We use s.timestamp
+          // rather than u.access because it is much faster.
+          $anonymous_count = sess_count($interval);
+          $authenticated_users = db_query('SELECT DISTINCT u.uid, u.name, s.timestamp FROM {users} u INNER JOIN {sessions} s ON u.uid = s.uid WHERE u.uid > 1 AND s.timestamp >= %d AND s.uid > 0 ORDER BY s.timestamp DESC', $interval);
+          $authenticated_count = 0;
+          $max_users = variable_get('user_block_max_list_count', 10);
+          $items = array();
+          while ($account = db_fetch_object($authenticated_users)) {
+            if ($max_users > 0) {
+              $items[] = $account;
+              $max_users--;
+            }
+            $authenticated_count++;
+          }
+
+          // Format the output with proper grammar.
+          if ($anonymous_count == 1 && $authenticated_count == 1) {
+            $output = t('There is currently %members and %visitors online.', array('%members' => format_plural($authenticated_count, '1 user', '@count users'), '%visitors' => format_plural($anonymous_count, '1 guest', '@count guests')));
+          }
+          else {
+            $output = t('There are currently %members and %visitors online.', array('%members' => format_plural($authenticated_count, '1 user', '@count users'), '%visitors' => format_plural($anonymous_count, '1 guest', '@count guests')));
+          }
+
+          // Display a list of currently online users.
+          $max_users = variable_get('user_block_max_list_count', 10);
+          if ($authenticated_count && $max_users) {
+            $output .= theme('user_list', $items, t('Online users'));
+          }
+
+          $block['subject'] = t('Who\'s online');
+          $block['content'] = $output;
+        }
+        return $block;
+    }
+  }
+}
