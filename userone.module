@@ -110,6 +110,14 @@ function userone_form_alter(&$form, $form_state, $form_id) {
       }
     }
   }
+  // Hide user 1 in the user listing at admin/user/user
+  else if ($form_id == 'user_admin_account') {
+    $keys = array('name', 'status', 'roles', 'member_for', 'last_access', 'operations');
+    foreach($keys as $key) {
+      unset($form[$key][1]);
+    }
+    unset($form['accounts']['#options'][1]);
+  }
 }
 
 /**
