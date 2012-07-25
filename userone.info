@@ -1,5 +1,3 @@
-
 name = User One
-description = Allows first user to log in with a login name different from username.
-version = 6.x-1.0
-core = 6.x
+description = Provide limited access to user one account even from administrators
+core = 7.x

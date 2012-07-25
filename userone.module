@@ -4,198 +4,79 @@
  * @file
  * User One module.
  *
- * Allows first user to log in with a login name different from username.
+ * Provide limited access to user one account even from administrators
  */
 
 /**
- * Implementation of hook_help().
+ * Implements hook_help().
  */
 function userone_help($path, $arg) {
   switch ($path) {
     case 'admin/help#userone':
-      return t('Allows first user to log in with a login name different from user name.');
+      $output = '';
+      $output .= '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('The User One module provides limited access to user one account and augment Drupal core to discourage brute-force login attacks. It helps protect user one account from users with permissions to administer users.') . '</p>';
+      $output .= '<h3>' . t('Features') . '</h3>';
+      $output .= '<ul>';
+      $output .= '<li>'. t("User one account is protected from viewing and editing. Users -- even with 'Administer users' permission -- will be denied access.") . '</li>';
+      $output .= '<li>'. t('User one account is hidden from user listing page, /admin/people.') . '</li>';
+      $output .= '<li>'. t("User one account is hidden from user lists such as in blocks, Who's New and Who's Online. User One provides its own version of Who's Online block for correct count of logged in users besides hiding user one.") . '</li>';
+      $output .= '<li>'. t("User One exposes Drupal's built-in values to change otherwise inaccessible such as number of allowed login attempts and time window to remember such login attempts.") . '</li>';
+      $output .= '<li>'. t('While Drupal temporarily deny login after multiple failed logins, User One goes one step further to allow permanently block such IPs automatically and notify the site admin.') . '</li>';
+      $output .= '</ul>';
+
+      return $output;
   }
 }
 
 /**
- * Implementation of hook_menu_alter().
+ * Implements hook_menu_alter().
+ * To prevent users from editing user 1 account.
  */
 function userone_menu_alter(&$items) {
-  // Since there is no "pre-delete" action for hook_user(), modify access callback.
-  $items['user/%user/delete']['access callback'] = 'userone_delete_access';
+  $items['user/%user/edit']['access callback'] = 'userone_edit_access';
 }
 
-function userone_delete_access($perm) {
-  // No one, not even user one, should have delete permission for user one.
-  if (arg(1) == 1) {
+/**
+ * Augment core's user_edit_access().
+ * Block edit access to user 1 account.
+ */
+function userone_edit_access($account) {
+  if ($account->uid == 1 and $GLOBALS['user']->uid != 1) {
     return FALSE;
   }
-  else {
-    return user_access($perm);
-  }
+
+  return user_edit_access($account);
 }
 
 /**
- * @param $mode
- *   string: 'view' or 'edit'
+ * Implements hook_user_view().
+ * Block viewing user 1 profile and redirect to one's own.
  */
-function userone_access_raw($mode) {
-  static $cached, $roles;
-  
-  if (!$cached[$mode]) {
-    $cached[$mode] = TRUE;
-    $roles[$mode] = array();
-    
-    if ($mode == 'view') {
-      $result = db_query("SELECT rid FROM {permission} WHERE perm LIKE '%%access user profiles,%%' OR perm LIKE '%%access user profiles'");
-    }
-    else if ($mode == 'edit') {
-      $result = db_query("SELECT rid FROM {permission} WHERE perm LIKE '%%administer users,%%' OR perm LIKE '%%administer users'");
-    }
-    else {
-      return FALSE;
-    }
-    
-    while ($row = db_fetch_object($result)) {
-      $roles[$mode][] = $row->rid;
-    }
+function userone_user_view($account, $view_mode, $langcode) {
+  if ($account->uid == 1 and $GLOBALS['user']->uid != 1) {
+    drupal_goto('user');
   }
-  
-  return $roles[$mode];
 }
 
 /**
- * Implementation of hook_user().
+ * Implements hook_form_alter().
+ * Hide user 1 in the user listing at admin/people
  */
-function userone_user($op, &$edit, &$account, $category = NULL) {
-  global $user;
-  
-  // Access control to edit of user one account.
-  if ($op == 'form') {
-    if ($account->uid == 1 and $user->uid != 1) {
-      // Make sure access allowed roles are pulled from ones with 'administer users' permission.
-      $roles_access = userone_access_raw('edit');
-      $roles_access = array_intersect($roles_access, variable_get('userone_edit_access', userone_access_raw('edit')));
-
-      if (!(user_edit_access($account) and (bool)array_intersect($roles_access, array_keys($user->roles)))) {
-        drupal_goto('user');
-      }
-    }
-  }
-  // Access control to view of user one account.
-  else if ($op == 'view') {
-    if ($account->uid == 1 and $user->uid != 1) {
-      // Make sure access allowed roles are pulled from ones with 'access user profiles' permission.
-      $roles_access = userone_access_raw('view');
-      $roles_access = array_intersect($roles_access, variable_get('userone_view_access', userone_access_raw('view')));
-
-      if (!(user_view_access($account) and (bool)array_intersect($roles_access, array_keys($user->roles)))) {
-        drupal_goto('user');
-      }
-    }
-  }
+function userone_form_user_admin_account_alter(&$form, $form_state, $form_id) {
+  unset($form['accounts']['#options'][1]);
 }
 
 /**
- * Implementation of hook_form_alter().
- */
-function userone_form_alter(&$form, $form_state, $form_id) {
-  if ($form_id == 'user_login' || $form_id == 'user_login_block') {
-    // Replace the core validator with useone's.
-    foreach ($form['#validate'] as $key => $validator) {
-      if ($validator == 'user_login_authenticate_validate') {
-        $form['#validate'][$key] = 'userone_login_authenticate_validate';
-        break;
-      }
-    }
-  }
-  // Hide user 1 in the user listing at admin/user/user
-  else if ($form_id == 'user_admin_account') {
-    $keys = array('name', 'status', 'roles', 'member_for', 'last_access', 'operations');
-    foreach($keys as $key) {
-      unset($form[$key][1]);
-    }
-    unset($form['accounts']['#options'][1]);
-  }
-}
-
-/**
- * Replace core's user_login_authenticate_validate()
- */
-function userone_login_authenticate_validate($form, &$form_state) {
-  if (!userone_authenticate($form_state['values'])) {
-    user_authenticate($form_state['values']);
-  }
-}
-
-/**
- * @return
- *   True if User One handled authentication whether it was successful or not so it is not handled again by user_authenticate().
- */
-function userone_authenticate($form_values) {
-  global $user;
-
-  if ($userone_name = variable_get('userone_name', '')) {
-    $userone = user_load(1);
-    
-    if ($form_values['name'] == $userone_name) {
-      if (md5($form_values['pass']) == $userone->pass) {
-        if (userone_check_ip()) {
-          $user = $userone;
-          user_authenticate_finalize($form_values);
-          watchdog('userone', 'Session opened for user one account.');
-        }
-        else {
-          watchdog('userone', 'Login attempt failed for user one due to unmatching IP address.');
-        }
-      }
-      else {
-        watchdog('userone', 'Login attempt failed for user one with User One login (%user).', array('%user' => $form_values['name']));
-      }
-
-      return TRUE;
-    }
-    elseif ($form_values['name'] == $userone->name) {
-      if (md5($form_values['pass']) == $userone->pass) {
-        watchdog('userone', 'Login attempt failed for user one with Drupal username (%user) and correct password.', array('%user' => $form_values['name']));
-      }
-      else {
-        watchdog('userone', 'Login attempt failed for user one with Drupal username (%user) and wrong password.', array('%user' => $form_values['name']));
-      }
-
-      return TRUE;
-    }
-  }
-
-  return FALSE;
-}
-
-/**
- * Check if remote ip address is in the allowed list.
- */
-function userone_check_ip() {
-  if ($ips = variable_get('userone_ip', '')) {
-    $ips = explode("\n", str_replace("\r", '', $ips));
-    foreach ($ips as $ip) {
-      if (strpos($_SERVER['REMOTE_ADDR'] .'.', "$ip.") === 0) {
-        return TRUE;
-      }
-    }
-    return FALSE;
-  }
-  return TRUE;
-}
-
-/**
- * Implementation of hook_menu().
+ * Implements hook_menu().
  */
 function userone_menu() {
   global $user;
   $items = array();
 
-  $items['admin/settings/userone'] = array(
+  $items['admin/config/people/userone'] = array(
     'title' => 'User One',
-    'description' => 'Configure User One.',
+    'description' => 'Configure User One settings to better protect site admin account.',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('userone_admin_settings'),
     'access callback' => 'userone_admin_access',
@@ -210,170 +91,273 @@ function userone_admin_access() {
 }
 
 function userone_admin_settings() {
-  $form['info'] = array(
-    '#value' => '<p>' . t('User One authenticates the admin account (user 1) using login name in place of username. The module may conflict with  other 3rd party authentication modules.') . '</p>',
-  );
-
-  $form['userone_name'] = array(
-    '#type' => 'textfield',
-    '#title' => t('User One Login Name'),
-    '#description' => t('In order to ensure uniqueness of the login name, you are <strong>strongly encouraged to use illegal characters</strong> for regular user name such as !@#$%&*.'),
-    '#default_value' => variable_get('userone_name', ''),
-  );
-  
-  $form['userone_ip'] = array(
-    '#type' => 'textarea',
-    '#title' => t('Allowed IP addresses'),
-    '#description' => t('List one IP per line which admin account should login from. Missing trailing numbers will be interpreted as wildcard. (i.e., 123.45 will allow all IPs like 123.45.*.*). If empty, there will be no restriction.'),
-    '#default_value' => variable_get('userone_ip', ''),
-  );
-  
-  $roles = user_roles(TRUE, 'administer users');
-  
-  if ($roles) {
-    $form['userone_edit_access'] = array(
-      '#type' => 'checkboxes',
-      '#title' => t('Allow editing user one account'),
-      '#default_value' => variable_get('userone_edit_access', array()),
-      '#options' => $roles,
-      '#description' => t("User One blocks all roles with 'administer users' permission from editing user one account. Check roles for which you want to allow editing user one account, which is not recommended. Additionally, delete access to user one is blocked for everyone including user one itself."),
-      
-    );
-  }
-  else {
-    $form['userone_edit_access_info'] = array(
-      '#type' => 'item',
-      '#title' => t('Access to user one edit blocked'),
-      '#description' => t('No account except user one account can edit user one account regardless of roles and permissions.'),
-    );
+  // Since select values are string, resave them as integer.
+  foreach (array('ip_limit'   => 50, 'ip_window'   => 3600,
+                 'user_limit' => 5,  'user_window' => 21600) as $param => $default) {
+    if (is_string($val = variable_get("user_failed_login_$param", $default))) {
+      variable_set("user_failed_login_$param", (int)$val);
+    }
   }
 
-  $roles = user_roles(FALSE, 'access user profiles');
+  $form['userone_edit_access_info'] = array(
+    '#type' => 'item',
+    '#title' => t('Access to user one edit blocked'),
+    '#markup' => t('No account except user one account can edit user one account.'),
+  );
+
+  $form['userone_view_access_info'] = array(
+    '#type' => 'item',
+    '#title' => t('Access to user one profile blocked'),
+    '#markup' => t('No account except user one account can view user one account.'),
+  );
+
+  $form['failed_login'] = array(
+    '#type' => 'fieldset',
+    '#title' => 'Allowed failed login attempts',
+    '#description' => "This setting exposes Drupal's built-in configuration values otherwise inaccessible. It applies to all users, not just user one.",
+  );
+
+  $form['failed_login']['user_failed_login_ip_limit'] = array(
+    '#type' => 'select',
+    '#title' => t('Allowed failed login attempts for an IP address (default 50)'),
+    '#options' => array(
+      1 => 1,
+      2 => 2,
+      3 => 3,
+      4 => 4,
+      5 => 5,
+      10 => 10,
+      25 => 25,
+      50 => 50,
+      75 => 75,
+      100 => 100,
+      250 => 250,
+    ),
+    '#default_value' => variable_get('user_failed_login_ip_limit', 50),
+    '#description' => t("Do not allow any login from the current user's IP if the limit has been reached. Default is 50 failed attempts allowed in one hour. This is independent of the per-user limit to catch attempts from one IP to log in to many different user accounts.  We have a reasonably high limit since there may be only one apparent IP for all users at an institution."),
+  );
+
+  $form['failed_login']['user_failed_login_ip_window'] = array(
+    '#type' => 'select',
+    '#title' => t('Failed login window for an IP address (default 1 hour)'),
+    '#options' => array(
+      300 => '5 minutes',
+      600 => '10 minutes',
+      900 => '15 minutes',
+      1800 => '30 minutes',
+      2700 => '45 minutes',
+      3600 => '1 hour',
+      7200 => '2 hours',
+      10800 => '3 hours',
+      14400 => '4 hours',
+      18000 => '5 hours',
+      21600 => '6 hours',
+      28800 => '8 hours',
+      36000 => '10 hours',
+      43200 => '12 hours',
+      86400 => '24 hours',
+    ),
+    '#default_value' => variable_get('user_failed_login_ip_window', 3600),
+    '#description' => t('Time period during which failed logins are accounted for.'),
+  );
   
-  if ($roles) {
-    $form['userone_view_access'] = array(
-      '#type' => 'checkboxes',
-      '#title' => t('Allow viewing user one account'),
-      '#default_value' => variable_get('userone_view_access', userone_access_raw('view')),
-      '#options' => $roles,
-      '#description' => t("Uncheck roles for which you want to disallow viewing user one account even if they have 'access user profiles' permission."),
-      
-    );
-  }
-  else {
-    $form['userone_view_access_info'] = array(
-      '#type' => 'item',
-      '#title' => t('Access to user one profile blocked'),
-      '#description' => t('No account except user one account can view user one account.'),
-    );
-  }
-  
+  $form['failed_login']['userone_block_ip_on_failed_login_ip'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Permanently block IP when failed logins breaks threshold')
+                . ' (' . l(t('See blocked IPs'), 'admin/config/people/ip-blocking') . ')',
+    '#default_value' => variable_get('userone_block_ip_on_failed_login_ip', FALSE),
+    '#description' => 'User one account will be notified when an IP is blocked.',
+  );
+
+  $form['failed_login']['divider'] = array(
+    '#type' => 'item',
+    '#markup' => '<hr style="width: 50%" />',
+  );
+
+  $form['failed_login']['user_failed_login_user_limit'] = array(
+    '#type' => 'select',
+    '#title' => t('Allowed failed login attempts for an account (default 5)'),
+    '#options' => array(
+      1 => 1,
+      2 => 2,
+      3 => 3,
+      4 => 4,
+      5 => 5,
+      10 => 10,
+      25 => 25,
+      50 => 50,
+      75 => 75,
+      100 => 100,
+      250 => 250,
+    ),
+    '#default_value' => variable_get('user_failed_login_user_limit', 5),
+    '#description' => t('User will be allowed to attempt logins this many times within the period (see below).'),
+  );
+
+  $form['failed_login']['user_failed_login_user_window'] = array(
+    '#type' => 'select',
+    '#title' => t('Failed login window for an account (default 6 hours)'),
+    '#options' => array(
+      300 => '5 minutes',
+      600 => '10 minutes',
+      900 => '15 minutes',
+      1800 => '30 minutes',
+      2700 => '45 minutes',
+      3600 => '1 hour',
+      7200 => '2 hours',
+      10800 => '3 hours',
+      14400 => '4 hours',
+      18000 => '5 hours',
+      21600 => '6 hours',
+      28800 => '8 hours',
+      36000 => '10 hours',
+      43200 => '12 hours',
+      86400 => '24 hours',
+    ),
+    '#default_value' => variable_get('user_failed_login_user_window', 21600),
+    '#description' => t('Number of failed logins for an account will be accounted for this period'),
+  );
+
+  $form['failed_login']['userone_block_ip_on_failed_login_user1'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Permanently block IP when failed logins <strong>for user one</strong> breaks threshold')
+                . ' (' . l(t('See blocked IPs'), 'admin/config/people/ip-blocking') . ')',
+    '#default_value' => variable_get('userone_block_ip_on_failed_login_user1', FALSE),
+    '#description' => 'User one account will be notified when an IP is blocked.',
+  );
   return system_settings_form($form);
 }
 
-function userone_admin_settings_validate($form, &$form_state) {
-  $userone = user_load(1);
+/**
+ * Implements hook_block_info().
+ */
+function userone_block_info() {
+  $blocks['online']['info'] = t("Who's online (userone)");
+  $blocks['online']['cache'] = DRUPAL_NO_CACHE;
+  $blocks['online']['properties']['administrative'] = TRUE;
 
-  if ($form_state['values']['userone_name'] == $userone->name) {
-    form_set_error('userone_name', t('Login name may not be same as username, %name.', array('%name' => $userone->name)));
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ * Code is identical from user_block_view() except it excludes user 1 in the count.
+ */
+
+function userone_block_view($delta = '') {
+  if ($delta == 'online') {
+    if (user_access('access content')) {
+      // Count users active within the defined period.
+      $interval = REQUEST_TIME - variable_get('user_block_seconds_online', 900);
+
+      // Perform database queries to gather online user lists. We use s.timestamp
+      // rather than u.access because it is much faster.
+      $authenticated_count = db_query("SELECT COUNT(DISTINCT s.uid) FROM {sessions} s WHERE s.timestamp >= :timestamp AND s.uid > 1", array(':timestamp' => $interval))->fetchField();
+
+      $output = '<p>' . format_plural($authenticated_count, 'There is currently 1 user online.', 'There are currently @count users online.') . '</p>';
+
+      // Display a list of currently online users.
+      $max_users = variable_get('user_block_max_list_count', 10);
+      if ($authenticated_count && $max_users) {
+        $items = db_query_range('SELECT u.uid, u.name, MAX(s.timestamp) AS max_timestamp FROM {users} u INNER JOIN {sessions} s ON u.uid = s.uid WHERE s.timestamp >= :interval AND s.uid > 1 GROUP BY u.uid, u.name ORDER BY max_timestamp DESC', 0, $max_users, array(':interval' => $interval))->fetchAll();
+        $output .= theme('user_list', array('users' => $items));
+      }
+
+      $block['subject'] = t('Who\'s online');
+      $block['content'] = $output;
+    }
+    return $block;
   }
 }
 
 /**
- * Implementation of hook_block().
- *
- * Code is identical to user_block() except it hides user one in "What's new" and "Who's online" blocks.
+ * Implements hook_preprocess_HOOK().
+ * Removes user 1 from the user list; affects blocks, Who's New and Who's Online.
  */
-function userone_block($op = 'list', $delta = 0, $edit = array()) {
-  global $user;
-
-  if ($op == 'list') {
-    $blocks[2]['info'] = t('Who\'s new (userone)');
-
-    // Too dynamic to cache.
-    $blocks[3]['info'] = t('Who\'s online (userone)');
-    $blocks[3]['cache'] = BLOCK_NO_CACHE;
-    return $blocks;
-  }
-  else if ($op == 'configure' && $delta == 2) {
-    $form['user_block_whois_new_count'] = array(
-      '#type' => 'select',
-      '#title' => t('Number of users to display'),
-      '#default_value' => variable_get('user_block_whois_new_count', 5),
-      '#options' => drupal_map_assoc(array(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-    );
-    return $form;
-  }
-  else if ($op == 'configure' && $delta == 3) {
-    $period = drupal_map_assoc(array(30, 60, 120, 180, 300, 600, 900, 1800, 2700, 3600, 5400, 7200, 10800, 21600, 43200, 86400), 'format_interval');
-    $form['user_block_seconds_online'] = array('#type' => 'select', '#title' => t('User activity'), '#default_value' => variable_get('user_block_seconds_online', 900), '#options' => $period, '#description' => t('A user is considered online for this long after they have last viewed a page.'));
-    $form['user_block_max_list_count'] = array('#type' => 'select', '#title' => t('User list length'), '#default_value' => variable_get('user_block_max_list_count', 10), '#options' => drupal_map_assoc(array(0, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)), '#description' => t('Maximum number of currently online users to display.'));
-
-    return $form;
-  }
-  else if ($op == 'save' && $delta == 2) {
-    variable_set('user_block_whois_new_count', $edit['user_block_whois_new_count']);
-  }
-  else if ($op == 'save' && $delta == 3) {
-    variable_set('user_block_seconds_online', $edit['user_block_seconds_online']);
-    variable_set('user_block_max_list_count', $edit['user_block_max_list_count']);
-  }
-  else if ($op == 'view') {
-    $block = array();
-
-    switch ($delta) {
-      case 2:
-        if (user_access('access content')) {
-          // Retrieve a list of new users who have subsequently accessed the site successfully.
-          $result = db_query_range('SELECT uid, name FROM {users} WHERE uid > 1 AND status != 0 AND access != 0 ORDER BY created DESC', 0, variable_get('user_block_whois_new_count', 5));
-          while ($account = db_fetch_object($result)) {
-            $items[] = $account;
-          }
-          $output = theme('user_list', $items);
-
-          $block['subject'] = t('Who\'s new');
-          $block['content'] = $output;
-        }
-        return $block;
-
-      case 3:
-        if (user_access('access content')) {
-          // Count users active within the defined period.
-          $interval = time() - variable_get('user_block_seconds_online', 900);
-
-          // Perform database queries to gather online user lists.  We use s.timestamp
-          // rather than u.access because it is much faster.
-          $anonymous_count = sess_count($interval);
-          $authenticated_users = db_query('SELECT DISTINCT u.uid, u.name, s.timestamp FROM {users} u INNER JOIN {sessions} s ON u.uid = s.uid WHERE u.uid > 1 AND s.timestamp >= %d AND s.uid > 0 ORDER BY s.timestamp DESC', $interval);
-          $authenticated_count = 0;
-          $max_users = variable_get('user_block_max_list_count', 10);
-          $items = array();
-          while ($account = db_fetch_object($authenticated_users)) {
-            if ($max_users > 0) {
-              $items[] = $account;
-              $max_users--;
-            }
-            $authenticated_count++;
-          }
-
-          // Format the output with proper grammar.
-          if ($anonymous_count == 1 && $authenticated_count == 1) {
-            $output = t('There is currently %members and %visitors online.', array('%members' => format_plural($authenticated_count, '1 user', '@count users'), '%visitors' => format_plural($anonymous_count, '1 guest', '@count guests')));
-          }
-          else {
-            $output = t('There are currently %members and %visitors online.', array('%members' => format_plural($authenticated_count, '1 user', '@count users'), '%visitors' => format_plural($anonymous_count, '1 guest', '@count guests')));
-          }
-
-          // Display a list of currently online users.
-          $max_users = variable_get('user_block_max_list_count', 10);
-          if ($authenticated_count && $max_users) {
-            $output .= theme('user_list', $items, t('Online users'));
-          }
-
-          $block['subject'] = t('Who\'s online');
-          $block['content'] = $output;
-        }
-        return $block;
+function userone_preprocess_user_list(&$vars) {
+  foreach ($vars['users'] as $key => $usr) {
+    if ($usr->uid == 1) {
+      unset($vars['users'][$key]);
+      return;
     }
   }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ * Append to the list of core validators to block IPs.
+ * Duplicate code to avoid using hook_form_alter() for better performance.
+ */
+function userone_form_user_login_alter(&$form, &$form_state) {
+  $form['#validate'][] = 'userone_block_ips';
+}
+function userone_form_user_login_block_alter(&$form, &$form_state) {
+  $form['#validate'][] = 'userone_block_ips';
+}
+
+function userone_block_ips($form, &$form_state) {
+  if (!empty($form_state['uid'])) return;
+
+  if (variable_get('userone_block_ip_on_failed_login_ip', FALSE)) {
+    // Find IPs that broke threshold and block them permanently.
+    $result = db_query("SELECT identifier AS ip FROM {flood} WHERE event = :event AND timestamp > :timestamp GROUP BY identifier HAVING COUNT(*) > :threshold", array(
+      ':event' => 'failed_login_attempt_ip',
+      ':timestamp' => REQUEST_TIME - variable_get('user_failed_login_ip_window', 3600),
+      ':threshold' => variable_get('user_failed_login_ip_limit', 50),
+    ));
+
+    foreach ($result as $row) {
+      if (!db_query("SELECT * FROM {blocked_ips} WHERE ip = :ip", array(':ip' => $row->ip))->fetchField()) {
+        db_insert('blocked_ips')
+          ->fields(array('ip' => $row->ip))
+          ->execute();
+
+        $blocked_ip[] = $row->ip;
+      }
+    }
+  }
+
+  if (variable_get('userone_block_ip_on_failed_login_user1', FALSE)) {
+    // Find IPs that broke threshold with user 1 and block them permanently.
+    $result = db_query("SELECT identifier AS uid_ip FROM {flood} WHERE event = :event AND timestamp > :timestamp AND identifier LIKE '1-%' GROUP BY identifier HAVING COUNT(*) > :threshold", array(
+      ':event' => 'failed_login_attempt_user',
+      ':timestamp' => REQUEST_TIME - variable_get('user_failed_login_user_window', 21600),
+      ':threshold' => variable_get('user_failed_login_user_limit', 5),
+    ));
+
+    foreach ($result as $row) {
+      list($uid, $ip) = explode('-', $row->uid_ip);
+      if (!db_query("SELECT * FROM {blocked_ips} WHERE ip = :ip", array(':ip' => $ip))->fetchField()) {
+        db_insert('blocked_ips')
+          ->fields(array('ip' => $ip))
+          ->execute();
+
+        $blocked_ip[] = $ip . ' (failed logins for user id ' . $uid . ')';
+      }
+    }
+  }
+
+  // Notify user one.
+  if (!empty($blocked_ip)) {
+    $user1 = user_load(1);
+
+    $params['subject'] = variable_get('site_name') . ': Blocked IP due to multiple failed logins';
+    $params['body'][] = 'Hi User One,';
+    $params['body'][] = 'There were suspected login activities and associated IP has been blocked.';
+    $params['body'][] = 'Blocked IP: ' . implode(', ', $blocked_ip);
+    $params['body'][] = 'You can review the list of blocked IPs at ' . url('admin/config/people/ip-blocking', array('absolute' => TRUE));
+    $params['body'][] = 'Thank you.';
+    $params['body'][] = 'Sent by User One module.';
+
+    drupal_mail('userone', 'blocked-ip', $user1->mail, language_default(), $params);
+    //drupal_mail('userone', 'blocked-ip', $usr->mail, language_default(), $params, $from);
+  }
+}
+
+/*
+ * Implements hook_mail().
+ */
+function userone_mail($key, &$message, $params) {
+  $message['subject'] = $params['subject'];
+  $message['body'] = $params['body'];
 }

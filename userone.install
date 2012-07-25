@@ -1,18 +1,12 @@
 <?php
 
 /**
- * Implementation of hook_install().
- */
-function userone_install() {
-  drupal_set_message(t('Please visit !settings to create Use One login name.', array('!settings' => l(t('admin/settings/userone'), 'admin/settings/userone'))));
-}
-
-/**
- * Implementation of hook_uninstall().
+ * Implements hook_uninstall().
  */
 function userone_uninstall() {
-  variable_del('userone_name');
-  variable_del('userone_ip');
-  variable_del('userone_edit_access');
-  variable_del('userone_view_access');
+  $result = db_query("SELECT name FROM {variable} WHERE name LIKE 'userone_%'");
+
+  foreach ($result as $row) {
+    variable_del($row->name);
+  }
 }
