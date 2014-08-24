@@ -35,6 +35,7 @@ function userone_help($path, $arg) {
  */
 function userone_menu_alter(&$items) {
   $items['user/%user/edit']['access callback'] = 'userone_edit_access';
+  $items['user/%user/cancel']['access callback'] = 'userone_cancel_access';
 }
 
 /**
@@ -47,6 +48,18 @@ function userone_edit_access($account) {
   }
 
   return user_edit_access($account);
+}
+
+/**
+ * Augment core's user_cancel_access().
+ * Block cancel access to user 1 account for everyone.
+ */
+function userone_cancel_access($account) {
+  if ($account->uid == 1) {
+    return FALSE;
+  }
+
+  return user_cancel_access($account);
 }
 
 /**
